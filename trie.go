@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -89,15 +89,6 @@ import (
 // 	return strings.Replace(path, "//", "/", -1)
 // }
 
-
-
-
-
-
-
-
-
-
 // WalkFunc defines some action to take on the given key and value during
 // a Trie Walk. Returning a non-nil error will terminate the Walk.
 type WalkFunc func(key string, value interface{}) error
@@ -120,7 +111,14 @@ func PathSegmenter(path string, start int) (segment string, next int) {
 	if end == -1 {
 		return path[start:], -1
 	}
-	return path[start : start+end+1], start + end + 1
+	offset := start + end + 1
+	ret := path[start : start+end+1]
+	return ret, offset
+}
+
+type Path struct {
+	isRegex bool
+	path    string
 }
 
 // PathTrie is a trie of paths with string keys and interface{} values.
@@ -155,7 +153,18 @@ func NewPathTrie() *PathTrie {
 // nodes or for nodes with a value of nil.
 func (trie *PathTrie) Get(key string) interface{} {
 	node := trie
+	label := regexp.MustCompile(":[a-z]+")
+
 	for part, i := trie.segmenter(key, 0); ; part, i = trie.segmenter(key, i) {
+		log.Print(part, ", ", i)
+		if label.Match([]byte(part)) {
+			// we found a label...
+			// :id
+			log.Print("match")
+		} else {
+			log.Print(part, " does not match ", ":[a-z]+")
+		}
+
 		node = node.children[part]
 		if node == nil {
 			return nil
@@ -173,9 +182,19 @@ func (trie *PathTrie) Get(key string) interface{} {
 // Note that internal nodes have nil values so a stored nil value will not
 // be distinguishable and will not be included in Walks.
 func (trie *PathTrie) Put(key string, value interface{}) bool {
+
 	node := trie
+	//label := regexp.MustCompile(":[a-z]+")
 	for part, i := trie.segmenter(key, 0); ; part, i = trie.segmenter(key, i) {
+
+		// expand out labels to regexes, so we store trie keys as regex strings
+
+		// if label.Match([]byte(part)) {
+		// 	part = label.ReplaceAllString(part, "([^\\/]+)")
+		// }
+
 		child, _ := node.children[part]
+
 		if child == nil {
 			child = NewPathTrie()
 			node.children[part] = child
@@ -185,6 +204,7 @@ func (trie *PathTrie) Put(key string, value interface{}) bool {
 			break
 		}
 	}
+
 	// does node have an existing value?
 	isNewVal := node.value == nil
 	node.value = value
@@ -252,47 +272,45 @@ func (trie *PathTrie) isLeaf() bool {
 	return len(trie.children) == 0
 }
 
-func main() {
-	t := NewPathTrie()
-	rootHandler := func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "I love /")
-	}
-
-	t.Put("/", rootHandler)
-
-	x := t.Get("/")
-	log.Print(x)
+func redirectHandler2(w http.ResponseWriter, r *http.Request, location string) []byte {
+	w.Header().Set("x-foo", r.URL.String())
+	w.Header().Set("Location", location)
+	w.WriteHeader(301)
+	return []byte("Redirecting...")
 }
 
-// func main2() {
+func redirectHandler(loc string) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(301)
+		w.Header().Set("x-sigma-match", r.URL.String())
+		w.Header().Set("x-sigma", "redirect")
+		w.Header().Set("Location", loc)
+		w.Write([]byte("Redirecting..."))
+	}
+}
 
-// 	redirectHandler := func(w http.ResponseWriter, r *http.Request) {
-// 		fmt.Fprint(w, "I love /")
-// 	}
+func (trie *PathTrie) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[%s]", r.URL)
 
-// 	rootNode := &Node{
-// 		wildcard: true,
-// 		handler: redirectHandler,
-// 		children: make(map[string]*Node),
-// 	}
+	key := r.URL.String()
 
-// 	t := NewTrie(rootNode)
+	redirect := trie.Get(key)
 
-// 	fooBar := &Node{
-// 		handler: func(w http.ResponseWriter, r *http.Request) {
-// 			fmt.Fprint(w, "I love /foo/bar")
-// 		},
-// 	}
+	if redirect != nil {
+		// cast it to what it actually is...
+		redirect := redirect.(func(w http.ResponseWriter, r *http.Request))
+		redirect(w, r)
+	} else {
+		w.Header().Set("X-Sigma", "revproxy")
+		w.Write([]byte("Revproxy..."))
+	}
+}
 
-// 	t.Add("/foo/bar", fooBar)
+func main() {
+	t := NewPathTrie()
 
-// 	node := t.Fetch("/")
-// 	log.Print(node)
+	t.Put("/images/:id/butts", redirectHandler("https://news.bbc.co.uk/images/:id"))
+	//t.Put("/images/butts", redirectHandler("https://news.bbc.co.uk/images/:id"))
 
-// 	node = t.Fetch("/bar")
-// 	log.Print(node)
-
-// 	node = t.Fetch("/foo/bar")
-// 	log.Print(node)
-
-// }
+	http.ListenAndServe(":8080", t)
+}
