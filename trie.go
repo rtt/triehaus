@@ -111,9 +111,7 @@ func PathSegmenter(path string, start int) (segment string, next int) {
 	if end == -1 {
 		return path[start:], -1
 	}
-	offset := start + end + 1
-	ret := path[start : start+end+1]
-	return ret, offset
+	return path[start : start+end+1], start + end + 1
 }
 
 type Path struct {
@@ -149,6 +147,30 @@ func NewPathTrie() *PathTrie {
 	}
 }
 
+// GetPattern asshat
+func (trie *PathTrie) GetPattern(key string) interface{} {
+	node := trie
+	//label := regexp.MustCompile(":[a-z]+")
+
+	for part, i := trie.segmenter(key, 0); ; part, i = trie.segmenter(key, i) {
+
+		node = node.children[part]
+
+		if node == nil {
+			return nil
+		}
+		if i == -1 {
+			break
+		}
+
+		for k := range node.children {
+			log.Print(k, "<--")
+		}
+
+	}
+	return node.value
+}
+
 // Get returns the value stored at the given key. Returns nil for internal
 // nodes or for nodes with a value of nil.
 func (trie *PathTrie) Get(key string) interface{} {
@@ -156,14 +178,14 @@ func (trie *PathTrie) Get(key string) interface{} {
 	label := regexp.MustCompile(":[a-z]+")
 
 	for part, i := trie.segmenter(key, 0); ; part, i = trie.segmenter(key, i) {
-		log.Print(part, ", ", i)
+
+		log.Print("part, i => ", part, ", ", i)
 		if label.Match([]byte(part)) {
-			// we found a label...
-			// :id
-			log.Print("match")
+			log.Print("part match!")
 		} else {
 			log.Print(part, " does not match ", ":[a-z]+")
 		}
+		log.Print("---")
 
 		node = node.children[part]
 		if node == nil {
@@ -184,15 +206,9 @@ func (trie *PathTrie) Get(key string) interface{} {
 func (trie *PathTrie) Put(key string, value interface{}) bool {
 
 	node := trie
-	//label := regexp.MustCompile(":[a-z]+")
+
 	for part, i := trie.segmenter(key, 0); ; part, i = trie.segmenter(key, i) {
-
-		// expand out labels to regexes, so we store trie keys as regex strings
-
-		// if label.Match([]byte(part)) {
-		// 	part = label.ReplaceAllString(part, "([^\\/]+)")
-		// }
-
+		log.Print(part)
 		child, _ := node.children[part]
 
 		if child == nil {
@@ -294,7 +310,7 @@ func (trie *PathTrie) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	key := r.URL.String()
 
-	redirect := trie.Get(key)
+	redirect := trie.GetPattern(key)
 
 	if redirect != nil {
 		// cast it to what it actually is...
